@@ -3,10 +3,15 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import sys
 import tempfile
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Final
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from domains import DomainRegistryError, domain_profile  # noqa: E402
 
 
 SCHEMA_VERSION: Final = 1
@@ -20,15 +25,21 @@ SETUP_STEPS: Final = (
         "reference-suitability",
         "Read grimoire/intake/validation_rubric.md and record a pass, conditional, or reject verdict for {reference}",
     ),
-    ("reference-admission", "python3 forge/stage1_intake/check_reference_admission.py {reference}"),
+    ("reference-admission",
+     "python3 forge/stage1_intake/check_reference_admission.py {reference}"
+     " --out admission.json --probe-out probe.json"),
     ("local-spec-search", "Run the local evidence search before authoring the assessment"),
-    ("pre-spec-assessment", "python3 forge/stage2_spec/new_pre_spec_assessment.py \"<name>\" --image {reference} --out assessment.json"),
+    ("pre-spec-assessment",
+     "python3 forge/stage2_spec/new_pre_spec_assessment.py \"<name>\" --image {reference}"
+     " --domain {profile} --out assessment.json"),
     ("detail-inventory", "python3 forge/stage1_intake/build_detail_inventory.py {reference} --mode grid-3x3 --out-dir detail-inventory --out di.json"),
     (
         "projection-route",
         "Record whether projection is required; if required run solve_camera_pose.py, delight_albedo.py, and bake_projected_texture.py, otherwise skip with a reason",
     ),
-    ("spec-authoring", "python3 forge/stage2_spec/new_sculpt_spec.py \"<name>\" --image {reference} --assessment assessment.json --out object-sculpt-spec.json"),
+    ("spec-authoring",
+     "python3 forge/stage2_spec/new_sculpt_spec.py \"<name>\" --image {reference} --assessment assessment.json"
+     " --augmentation spec-augmentation.json --domain {profile} --out object-sculpt-spec.json"),
     (
         "material-evidence",
         "python3 forge/stage1_intake/material_region_analysis.py --manifest material-regions.json --out-dir material-evidence --out material-analysis.json"
@@ -36,23 +47,6 @@ SETUP_STEPS: Final = (
     ),
     ("material-spec-wiring", "python3 forge/stage2_spec/apply_material_analysis.py {spec} material-analysis.json --in-place"),
     ("strict-validation", "python3 forge/stage2_spec/validate_sculpt_spec.py {spec} --strict-quality"),
-)
-
-CHARACTER_STEPS: Final = (
-    (
-        "character-contract-read",
-        "Read grimoire/character/reconstruction.md and grimoire/character/likeness_maximization.md completely",
-    ),
-    (
-        "character-landmarks",
-        "python3 forge/stage1_intake/extract_landmarks.py {reference} --out anatomy.json --overlay landmarks.png",
-    ),
-)
-
-CS2_STEPS: Final = (
-    ("cs2-contract-read", "Read grimoire/intake/cs2_intake_contract.md completely"),
-    ("cs2-authoritative-classification", "Obtain an authoritative CS2 family/subtype classification record"),
-    ("cs2-manifest", "python3 forge/stage1_intake/cs2_manifest.py {reference} --classification classification.json --out cs2-intake.json"),
 )
 
 PASS_STEPS: Final = (
@@ -66,21 +60,62 @@ PASS_STEPS: Final = (
     ("pipeline-sync", "python3 forge/stage3_build/orchestrate_passes.py sync {spec} --in-place"),
 )
 
-CS2_PASS_STEPS: Final = (
-    (
-        "cs2-review",
-        "python3 forge/stage4_review/cs2_review.py --manifest cs2-intake.json --metrics cs2-review-inputs.json --scene forge/tests/fixtures/knife_review_scene.json --out cs2-review.json",
-    ),
-)
-
 FINAL_STEPS: Final = (
     ("part-coverage", "python3 forge/stage4_review/check_part_coverage.py --spec {spec} --manifest parts.json"),
     ("action-ready", "Verify explodable/clickable hierarchy, pivots, sockets, and root.userData.sculptRuntime"),
+    # D4/task 3.8: base-owned, appended unconditionally -- no plugin ever splices this in (there is
+    # no `finalSteps` key in domains/__init__.py's _ALLOWED, deliberately: a plugin must never be
+    # able to change what runs at the terminal phase behind the user's back). An explicit
+    # `--target <kind>` is the only thing that ever populates this step: on a successful run,
+    # `emit_target.record_target_selection` marks it `done` and records which plugin ran (or
+    # `None` for the reference target) in the new `targetSelection` state field, which slice 4's
+    # gate-participation rule reads. With no `--target`, emit_target.py's no-op path (D2) never
+    # touches this file at all -- correcting an earlier claim in this comment that the no-op path
+    # marks the row "done"; it does not, and this row is left `pending` on that path (a stated,
+    # not-yet-resolved rough edge: forge/next.py will keep naming it as the next required step
+    # even though there is nothing further to do when no target will ever be selected). Round-3 H6:
+    # workspaces created before this change do not carry this row in their persisted checklist
+    # (new_state() materialises FINAL_STEPS once, at init) -- not breakage, since nothing crashes and
+    # SCHEMA_VERSION stays 1, but emit_target.py's own action-ready precondition still enforces
+    # terminal-only there directly, independent of whether this row exists in a given state file.
+    (
+        "emission-target",
+        "python3 forge/stage3_build/emit_target.py --spec {spec} --workspace . "
+        "[--target <kind> [--plugin <id>]]",
+    ),
+    # task 4.2's proposed hook point (see run_gates.py's module docstring for the full rationale):
+    # a distinct checklist step, not auto-chained inside emit_target.py, following the same
+    # discipline every other FINAL_STEPS/PASS_STEPS row already has -- the agent invokes it, it is
+    # not triggered by the step before it. Harmless with no plugin involved: the two-clause rule
+    # naturally yields zero gates to run, and this exits 0 having done nothing.
+    ("plugin-gates", "python3 forge/stage3_build/run_gates.py --workspace ."),
 )
-
 
 class WorkflowStateError(ValueError):
     pass
+
+
+def _anchor_index(rows: list[Any], anchor: str, profile: str, key) -> int:
+    for index, row in enumerate(rows):
+        if key(row) == anchor:
+            return index
+    # An unknown anchor is a contribution the base cannot place. Failing loud beats appending at the
+    # end, which would put a domain's setup step after the steps that depend on it.
+    raise WorkflowStateError(f"profile {profile!r} anchors a step before unknown base step {anchor!r}")
+
+
+def _splice(rows: list[dict[str, Any]], steps, anchor: str | None, profile: str, *, scope: str) -> list[dict[str, Any]]:
+    if not steps:
+        return rows
+    at = _anchor_index(rows, anchor, profile, lambda r: r["id"])
+    return rows[:at] + [_step(*item, scope=scope) for item in steps] + rows[at:]
+
+
+def _splice_raw(rows: list[Any], steps, anchor: str | None, profile: str) -> list[Any]:
+    if not steps:
+        return rows
+    at = _anchor_index(rows, anchor, profile, lambda r: r[0])
+    return rows[:at] + list(steps) + rows[at:]
 
 
 def _step(step_id: str, command: str, *, scope: str) -> dict[str, Any]:
@@ -102,20 +137,18 @@ def new_state(
     max_per_pass: int = 3,
     max_total: int = 6,
 ) -> dict[str, Any]:
-    if profile not in {"generic", "cs2", "character"}:
-        raise WorkflowStateError("profile must be generic, cs2, or character")
+    try:
+        domain = domain_profile(profile)
+    except DomainRegistryError as exc:
+        raise WorkflowStateError(str(exc)) from exc
     if max_per_pass < 1 or max_total < 1 or max_per_pass > max_total:
         raise WorkflowStateError("loop limits require 1 <= max-per-pass <= max-total")
-    setup = [_step(*item, scope="setup") for item in SETUP_STEPS]
-    insertion = next(index for index, item in enumerate(setup) if item["id"] == "local-spec-search")
-    if profile == "cs2":
-        setup[insertion:insertion] = [_step(*item, scope="setup") for item in CS2_STEPS]
-    elif profile == "character":
-        setup[insertion:insertion] = [_step(*item, scope="setup") for item in CHARACTER_STEPS]
+
+    setup = [_step(sid, cmd.replace("{profile}", profile), scope="setup") for sid, cmd in SETUP_STEPS]
     pass_steps = list(PASS_STEPS)
-    if profile == "cs2":
-        review_index = next(index for index, item in enumerate(pass_steps) if item[0] == "ai-review-recorded")
-        pass_steps[review_index:review_index] = list(CS2_PASS_STEPS)
+    if domain is not None:
+        setup = _splice(setup, domain.get("setupSteps"), domain.get("setupAnchorBefore"), profile, scope="setup")
+        pass_steps = _splice_raw(pass_steps, domain.get("passSteps"), domain.get("passAnchorBefore"), profile)
     state = {
         "schemaVersion": SCHEMA_VERSION,
         "status": "active",
@@ -124,7 +157,8 @@ def new_state(
         "currentPass": "",
         "checklist": setup
         + [_step(*item, scope="pass") for item in pass_steps]
-        + [_step(*item, scope="final") for item in FINAL_STEPS],
+        + [_step(*item, scope="final") for item in FINAL_STEPS]
+        + [_step(*item, scope="rig") for item in ((domain.get("rigSteps") or ()) if domain else ())],
         "loops": {
             "perPass": {},
             "total": 0,
@@ -146,8 +180,12 @@ def validate_state(state: Any) -> dict[str, Any]:
         raise WorkflowStateError("state must be a JSON object")
     if state.get("schemaVersion") != SCHEMA_VERSION:
         raise WorkflowStateError(f"unsupported state schemaVersion: {state.get('schemaVersion')!r}")
-    if state.get("profile") not in {"generic", "cs2", "character"}:
-        raise WorkflowStateError("state profile is invalid")
+    # A state file written before its domain moved out must fail by naming the missing provider,
+    # never by silently downgrading the run to generic.
+    try:
+        domain_profile(state.get("profile"))
+    except DomainRegistryError as exc:
+        raise WorkflowStateError(str(exc)) from exc
     checklist = state.get("checklist")
     if not isinstance(checklist, list) or not checklist:
         raise WorkflowStateError("state checklist must be a non-empty list")
@@ -158,7 +196,7 @@ def validate_state(state: Any) -> dict[str, Any]:
         if entry["id"] in seen:
             raise WorkflowStateError(f"duplicate checklist step: {entry['id']}")
         seen.add(entry["id"])
-        if entry.get("scope") not in {"setup", "pass", "final"}:
+        if entry.get("scope") not in {"setup", "pass", "final", "rig"}:
             raise WorkflowStateError(f"invalid checklist scope for {entry['id']}")
         if entry.get("status") not in STEP_STATUSES:
             raise WorkflowStateError(f"invalid checklist status for {entry['id']}")
@@ -246,7 +284,15 @@ def next_entry(state: dict[str, Any]) -> dict[str, Any] | None:
             "command": "python3 forge/next.py --state .img2threejs/state.json {spec}",
         }
     final_pending = _pending(_entries(state, "final"))
-    return final_pending[0] if final_pending else None
+    if final_pending:
+        return final_pending[0]
+    # Stage R runs LAST, after the static model is complete and its coverage gates have passed:
+    # rigging is additive to a finished mesh, and binding a model whose parts are still moving
+    # would freeze geometry that has not settled. Dispatching it here is what makes the rig steps
+    # reachable at all -- a checklist entry no dispatcher returns is a step `next.py` never asks
+    # for, which is the same defect as a gate nothing invokes.
+    rig_pending = _pending(_entries(state, "rig"))
+    return rig_pending[0] if rig_pending else None
 
 
 def recompute(state: dict[str, Any]) -> None:
@@ -383,7 +429,7 @@ def status_payload(state: dict[str, Any]) -> dict[str, Any]:
     entry = next_entry(state)
     current_pass = str(state.get("currentPass") or "")
     loops = state["loops"]
-    visible_scopes = {"setup", "final"}
+    visible_scopes = {"setup", "final", "rig"}
     if current_pass != "complete":
         visible_scopes.add("pass")
     return {

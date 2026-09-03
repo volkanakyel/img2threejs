@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -55,14 +57,54 @@ class WorkflowStateTest(unittest.TestCase):
         self.assertLess(ids.index("material-evidence"), ids.index("material-spec-wiring"))
         self.assertLess(ids.index("material-spec-wiring"), ids.index("strict-validation"))
 
-    def test_cs2_state_includes_classification_and_manifest_before_pre_spec(self):
-        state = new_state("knife.png", profile="cs2")
+    def test_plugin_domain_steps_splice_before_their_anchors(self):
+        """A plugin-contributed domain drives the checklist through the registry, hermetically.
+
+        This test used to build a `cs2` state and passed only on machines where the cs2 plugin
+        happened to be installed under ~/.img2 -- the machine-global dependency that turned CI
+        red. It now installs a fixture plugin (mirroring cs2's `domain.json` shape: setup steps
+        anchored before `local-spec-search`, one pass step anchored before `ai-review-recorded`)
+        into a disposable $IMG2_HOME and asserts the same splice-order semantics.
+        """
+        domain_entry = {
+            "id": "fixture-dom",
+            "setupSteps": [
+                ["fx-contract-read", "Read {plugin_dir}/grimoire/contract.md completely"],
+                ["fx-classification", "Obtain an authoritative fixture classification record"],
+                ["fx-manifest", "python3 {plugin_dir}/tools/manifest.py {reference} --out fx.json"],
+            ],
+            "setupAnchorBefore": "local-spec-search",
+            "passSteps": [
+                ["fx-review", "python3 {plugin_dir}/tools/review.py --spec {spec} --out fx-review.json"]
+            ],
+            "passAnchorBefore": "ai-review-recorded",
+        }
+        home = Path(tempfile.mkdtemp(prefix="img2-home-"))
+        self.addCleanup(shutil.rmtree, home, True)
+        plugin_dir = home / "plugins" / "fixture-plugin"
+        plugin_dir.mkdir(parents=True)
+        (plugin_dir / "domain.json").write_text(json.dumps(domain_entry), encoding="utf-8")
+        (home / "plugins.json").write_text(
+            json.dumps({"version": 1, "plugins": [{"id": "fixture-plugin"}]}), encoding="utf-8"
+        )
+        prior = os.environ.get("IMG2_HOME")
+        os.environ["IMG2_HOME"] = str(home)
+        try:
+            state = new_state("fixture.png", profile="fixture-dom")
+        finally:
+            if prior is None:
+                os.environ.pop("IMG2_HOME", None)
+            else:
+                os.environ["IMG2_HOME"] = prior
         ids = [entry["id"] for entry in state["checklist"]]
-        self.assertLess(ids.index("cs2-contract-read"), ids.index("cs2-authoritative-classification"))
-        self.assertLess(ids.index("cs2-authoritative-classification"), ids.index("pre-spec-assessment"))
-        self.assertLess(ids.index("cs2-manifest"), ids.index("pre-spec-assessment"))
-        self.assertLess(ids.index("pass-gate-check"), ids.index("cs2-review"))
-        self.assertLess(ids.index("cs2-review"), ids.index("ai-review-recorded"))
+        self.assertLess(ids.index("fx-contract-read"), ids.index("fx-classification"))
+        self.assertLess(ids.index("fx-classification"), ids.index("fx-manifest"))
+        self.assertLess(ids.index("fx-manifest"), ids.index("local-spec-search"))
+        self.assertLess(ids.index("local-spec-search"), ids.index("pre-spec-assessment"))
+        self.assertLess(ids.index("pass-gate-check"), ids.index("fx-review"))
+        self.assertLess(ids.index("fx-review"), ids.index("ai-review-recorded"))
+        by_id = {entry["id"]: entry for entry in state["checklist"]}
+        self.assertIn(str(plugin_dir), by_id["fx-manifest"]["command"])
 
     def test_character_state_requires_contract_landmarks_and_route_decision(self):
         state = new_state("character.png", profile="character")
@@ -212,6 +254,76 @@ class WorkflowStateTest(unittest.TestCase):
             self.assertIn("LOCAL_STATE status=active step=image-analysis", result.stdout)
             self.assertIn("pending mandatory steps", result.stdout)
 
+    def test_next_cli_reads_state_when_init_recorded_a_spec_path_that_is_not_written_yet(self):
+        """`state.py init --spec` records where the spec WILL land.
+
+        SKILL.md's documented opening pair is `state.py init ... --spec object-sculpt-spec.json`
+        followed immediately by `next.py --state ...`, so the recorded path is absent for the
+        whole pre-spec phase. The mandatory gate must still report the checklist there instead of
+        failing, otherwise the pipeline cannot be entered by its own instructions.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "state.json"
+            spec_path = Path(directory) / "object-sculpt-spec.json"
+            init = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "forge" / "state.py"),
+                    "init",
+                    "--state",
+                    str(state_path),
+                    "--reference",
+                    "reference.png",
+                    "--spec",
+                    str(spec_path),
+                ],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(init.returncode, 0, init.stderr)
+            self.assertFalse(spec_path.exists())
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "forge" / "next.py"), "--state", str(state_path)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("LOCAL_STATE status=active step=image-analysis", result.stdout)
+            self.assertNotIn("spec error", result.stderr)
+
+    def test_next_cli_still_fails_on_an_unreadable_spec_without_state(self):
+        """The pre-spec fallback is scoped to --state; a bare missing spec is still an error."""
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / "object-sculpt-spec.json"
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "forge" / "next.py"), str(missing)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("spec error", result.stderr)
+
+    def test_next_cli_reads_a_spec_that_exists_rather_than_the_pre_spec_checklist(self):
+        """Negative control for the fallback: once the spec is on disk it must be parsed."""
+        with tempfile.TemporaryDirectory() as directory:
+            state_path = Path(directory) / "state.json"
+            spec_path = Path(directory) / "object-sculpt-spec.json"
+            state = new_state("reference.png", spec=str(spec_path))
+            setup_ids = [entry["id"] for entry in state["checklist"] if entry["scope"] == "setup"]
+            mark_steps(state, setup_ids, status="done", evidence=["setup.json"])
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+            spec_path.write_text(
+                json.dumps({"buildPasses": [{"id": "blockout", "acceptance": []}], "reviewHistory": []}),
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [sys.executable, str(ROOT / "forge" / "next.py"), "--state", str(state_path)],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("pass=blockout", result.stdout)
+
     def test_next_cli_emits_only_state_ordered_build_command(self):
         with tempfile.TemporaryDirectory() as directory:
             state_path = Path(directory) / "state.json"
@@ -295,7 +407,9 @@ class WorkflowStateTest(unittest.TestCase):
     def test_skill_router_keeps_mandatory_state_and_reference_gates_visible(self):
         skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("forge/next.py --state .img2threejs/state.json", skill)
-        self.assertIn("MUST read `grimoire/intake/cs2_intake_contract.md` completely", skill)
+        # The rule that matters is that the contract-read is mandatory and complete, not which
+        # domain owns the contract -- the router names no domain.
+        self.assertIn("MUST read the contract its step names, completely", skill)
         self.assertIn("MUST read\n   `grimoire/review/gates_reference.md`", skill)
         self.assertIn("forge/stage4_review/diagnose_render.py", skill)
         self.assertIn("forge/stage4_review/diagnose_render_multi_angle.py", skill)
@@ -303,7 +417,8 @@ class WorkflowStateTest(unittest.TestCase):
 
     def test_all_direct_router_references_exist(self):
         for relative in (
-            "grimoire/intake/cs2_intake_contract.md",
+            # cs2_intake_contract.md is deliberately absent: it ships with the CS2 domain plugin,
+            # so a base checkout must NOT be expected to hold it.
             "grimoire/intake/local_spec_search.md",
             "grimoire/review/gates_reference.md",
             "grimoire/review/self_correction.md",
