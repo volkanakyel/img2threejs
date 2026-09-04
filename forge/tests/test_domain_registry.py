@@ -41,9 +41,9 @@ class Registry(unittest.TestCase):
         # happens to have under ~/.img2 -- the old form of this test asserted the INSTALLED cs2
         # plugin and was green or red depending on the machine, which is what turned CI red.
         with self._temp_img2_home({}):
-            self.assertEqual(sorted(registered_domains()), ["animated-character", "character"])
+            self.assertEqual(sorted(registered_domains()), ["character"])
         with self._temp_img2_home({"fixture-plugin": {"id": "fixture-dom"}}):
-            self.assertEqual(sorted(registered_domains()), ["animated-character", "character", "fixture-dom"])
+            self.assertEqual(sorted(registered_domains()), ["character", "fixture-dom"])
 
     def test_an_unregistered_profile_fails_loud_and_names_what_is_available(self) -> None:
         with self.assertRaises(DomainRegistryError) as ctx:
@@ -98,6 +98,24 @@ class Registry(unittest.TestCase):
                     registered_domains,
                 )
         self.assertIn("declared twice", str(ctx.exception))
+
+    def test_a_broken_registry_degrades_the_state_cli_instead_of_killing_it(self) -> None:
+        """extract-animated-character D8: state.py builds its --profile choices from
+        registered_domains() at argparse-construction time, which every subcommand runs. A registry
+        collision (a plugin claiming an in-repo id) must degrade init's choices to generic-only,
+        not take `status`/`mark` down for every profile on the machine -- the same hazard shape
+        targets.py:14-19 documents avoiding."""
+        import subprocess
+        import sys as _sys
+        with self._temp_img2_home({"dupe": {"id": "character"}}):
+            env = dict(os.environ)
+            proc = subprocess.run(
+                [_sys.executable, str(ROOT.parent / "forge" / "state.py"), "init", "--help"],
+                capture_output=True, text=True, env=env, cwd=ROOT.parent,
+            )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("--profile {generic}", proc.stdout)
+        self.assertNotIn("declared twice", proc.stderr)
 
     @contextlib.contextmanager
     def _temp_img2_home(self, plugins: dict[str, dict]):
