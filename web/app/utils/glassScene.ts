@@ -593,7 +593,7 @@ export class GlassStudio {
     const tanV = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))
     const tanH = tanV * this.camera.aspect
     // Fit both axes, then leave room for the panel on the left and the HUD below.
-    const dist = Math.max(size.y / 2 / tanV, size.x / 2 / tanH, size.z) * 1.55
+    const dist = Math.max(size.y / 2 / tanV, size.x / 2 / tanH, size.z) * 1.95
     const goal = this.viewDir.clone().multiplyScalar(dist)
     if (this.camera.position.lengthSq() < 1 || !this.mesh) this.camera.position.copy(goal)
     else this.camGoal = goal
