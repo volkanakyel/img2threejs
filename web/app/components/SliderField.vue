@@ -10,14 +10,9 @@ const props = withDefaults(defineProps<{
   unit?: string
   decimals?: number
   hint?: string
-  /** Value the reset dot returns to. Shown only when the current value differs. */
   defaultValue?: number
 }>(), { step: 0.01, unit: '', decimals: 2 })
 const emit = defineEmits<{ 'update:modelValue': [number] }>()
-
-const dragging = ref(false)
-const editing = ref(false)
-const draft = ref('')
 
 const arr = computed({
   get: () => [props.modelValue],
@@ -25,66 +20,52 @@ const arr = computed({
 })
 const changed = computed(() => props.defaultValue !== undefined && Math.abs(props.defaultValue - props.modelValue) > 1e-9)
 const text = computed(() => props.modelValue.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: props.decimals }))
+const draft = ref('')
+const editing = ref(false)
 
 function set(v: number) {
   if (Number.isNaN(v)) return
   emit('update:modelValue', Math.min(props.max, Math.max(props.min, v)))
 }
-function startEdit() {
-  draft.value = props.modelValue.toFixed(props.decimals).replace(/\.?0+$/, '')
+function focus(e: FocusEvent) {
   editing.value = true
-  nextTick(() => (document.getElementById(inputId) as HTMLInputElement | null)?.select())
+  draft.value = text.value
+  nextTick(() => (e.target as HTMLInputElement).select())
 }
-function commit() {
+function commit(e: Event) {
   editing.value = false
-  set(parseFloat(draft.value.replace(',', '.')))
+  set(parseFloat((e.target as HTMLInputElement).value.replace(',', '.')))
 }
 function onWheel(e: WheelEvent) {
   e.preventDefault()
   set(+(props.modelValue + (e.deltaY < 0 ? props.step : -props.step)).toFixed(6))
 }
-const inputId = `sf-${Math.random().toString(36).slice(2, 8)}`
 </script>
 
 <template>
-  <div class="group/field flex flex-col gap-2" :title="hint">
-    <div class="flex h-5 items-center justify-between">
-      <span class="flex items-center gap-1.5 text-[13px] text-foreground/80">
+  <div class="flex flex-col gap-2" :title="hint">
+    <div class="flex items-center justify-between">
+      <span class="flex items-center gap-1.5 text-[12.5px] text-foreground/85">
         {{ label }}
         <button
           v-if="changed"
-          class="size-1.5 rounded-full bg-foreground/35 transition hover:scale-150 hover:bg-foreground"
-          title="Reset to default"
-          @click="set(defaultValue!)"
-        />
+          class="text-muted-foreground/70 transition hover:text-foreground"
+          title="Reset to default" @click="set(defaultValue!)"
+        ><Icon name="reset" :size="11" /></button>
       </span>
-      <span class="flex items-baseline gap-1 font-mono text-[12px] tabular-nums">
+      <label class="flex h-6 items-center rounded-md border border-input bg-card pr-1.5 pl-2 shadow-xs transition focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30">
         <input
-          v-if="editing"
-          :id="inputId"
-          v-model="draft"
-          class="h-5 w-14 rounded bg-card px-1 text-right text-[12px] outline-none ring-1 ring-input"
-          @blur="commit"
-          @keydown.enter="commit"
-          @keydown.esc="editing = false"
+          class="w-11 bg-transparent text-right font-mono text-[11.5px] tabular-nums outline-none"
+          :value="editing ? draft : text"
+          @focus="focus" @input="draft = ($event.target as HTMLInputElement).value"
+          @blur="commit" @keydown.enter="($event.target as HTMLInputElement).blur()" @wheel="onWheel"
         >
-        <button
-          v-else
-          class="h-5 rounded px-1 text-right text-muted-foreground transition hover:bg-[var(--row-hover)] hover:text-foreground"
-          @click="startEdit"
-          @wheel="onWheel"
-        >{{ text }}</button>
-        <span v-if="unit" class="text-[10.5px] text-muted-foreground">{{ unit }}</span>
-      </span>
+        <span v-if="unit" class="ml-1 text-[10px] text-muted-foreground">{{ unit }}</span>
+      </label>
     </div>
     <Slider
-      v-model="arr"
-      :min="min" :max="max" :step="step"
-      class="h-4 [&_[data-slot=slider-thumb]]:size-3.5 [&_[data-slot=slider-thumb]]:border-[1.5px] [&_[data-slot=slider-thumb]]:border-foreground/70 [&_[data-slot=slider-range]]:bg-foreground/75 [&_[data-slot=slider-thumb]]:transition-transform [&_[data-slot=slider-thumb]]:hover:scale-110 [&_[data-slot=slider-thumb]]:active:scale-95 [&_[data-slot=slider-track]]:h-1 [&_[data-slot=slider-track]]:bg-muted"
-      :class="{ '[&_[data-slot=slider-thumb]]:ring-4': dragging }"
-      @pointerdown="dragging = true"
-      @pointerup="dragging = false"
-      @pointercancel="dragging = false"
+      v-model="arr" :min="min" :max="max" :step="step"
+      class="h-4 [&_[data-slot=slider-range]]:bg-foreground [&_[data-slot=slider-thumb]]:size-3.5 [&_[data-slot=slider-thumb]]:border-foreground [&_[data-slot=slider-thumb]]:ring-foreground/15 [&_[data-slot=slider-track]]:h-1 [&_[data-slot=slider-track]]:bg-foreground/10"
     />
   </div>
 </template>

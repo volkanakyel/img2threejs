@@ -152,122 +152,85 @@ function setHeight(v: number) {
 
 <template>
   <TooltipProvider :delay-duration="300">
-    <div
-      class="flex h-full w-full max-[860px]:flex-col-reverse"
-      @dragover.prevent="dragging = true"
-      @dragleave.prevent="dragging = false"
-      @drop.prevent="onDrop"
-    >
-      <ControlPanel
-        :trace="trace"
-        :trace-opts="traceOpts"
-        :glass="glass"
-        :height-mm="heightMm"
-        :file-name="fileName"
-        :busy="busy"
-        :error="error"
-        @pick="onPick"
-        @sample="loadSample"
-        @clear="clearImage"
-        @set-height="setHeight"
-      />
+    <div class="flex h-full w-full flex-col" @dragover.prevent="dragging = true" @dragleave.prevent="dragging = false" @drop.prevent="onDrop">
+      <!-- App bar -->
+      <header class="flex h-12 shrink-0 items-center justify-between border-b border-border/70 bg-card px-3">
+        <div class="flex items-center gap-2.5">
+          <span class="flex size-6 items-center justify-center rounded-md bg-foreground text-background"><Icon name="logo" :size="13" :stroke-width="2" /></span>
+          <span class="text-[13.5px] font-semibold tracking-[-0.01em]">Glass Studio</span>
+          <span class="mx-1 h-4 w-px bg-border" />
+          <span class="flex items-center gap-1.5 text-[12.5px] text-muted-foreground"><Icon name="frame" :size="13" /> {{ fileName || 'Untitled' }}</span>
+        </div>
+        <div class="flex items-center gap-1">
+          <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="sm" :disabled="!trace || !!exporting" class="h-8 text-[12.5px]" @click="doExport('png')"><Icon name="camera" :size="14" /> PNG</Button></TooltipTrigger><TooltipContent class="text-[11.5px]">Render the current view at 2×</TooltipContent></Tooltip>
+          <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="sm" :disabled="!trace || !!exporting" class="h-8 text-[12.5px]" @click="doExport('stl')"><Icon name="layers" :size="14" /> STL</Button></TooltipTrigger><TooltipContent class="text-[11.5px]">Binary STL in millimetres</TooltipContent></Tooltip>
+          <Button size="sm" :disabled="!trace || !!exporting" class="ml-1 h-8 rounded-md text-[12.5px]" @click="doExport('glb')"><Icon name="download" :size="14" /> Export GLB</Button>
+        </div>
+      </header>
 
-      <main class="flex min-w-0 flex-1 flex-col">
-        <header class="flex h-[52px] items-center justify-between border-b border-border/70 bg-card px-4">
-          <div class="flex items-center gap-2 text-[13px] font-medium text-muted-foreground">
-            <Icon name="box" :size="14" />
-            <span class="text-foreground">{{ fileName || 'Preview' }}</span>
-          </div>
+      <div class="flex min-h-0 flex-1 max-[860px]:flex-col-reverse">
+        <ControlPanel
+          :trace="trace" :trace-opts="traceOpts" :glass="glass" :height-mm="heightMm"
+          :file-name="fileName" :busy="busy" :error="error"
+          @pick="onPick" @sample="loadSample" @clear="clearImage" @set-height="setHeight"
+        />
 
-          <div class="flex rounded-md bg-black/5 p-0.5">
-            <button
-              v-for="v in (['angle', 'front', 'side', 'top'] as const)" :key="v"
-              class="h-6 rounded-[5px] px-3 text-[12px] font-medium capitalize transition-colors disabled:opacity-40"
-              :class="view === v ? 'bg-card text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.08),0_0_0_1px_rgba(0,0,0,0.04)]' : 'text-muted-foreground hover:text-foreground'"
-              :disabled="!trace" @click="setView(v)"
-            >{{ v }}</button>
-          </div>
-
-          <div class="flex items-center gap-1.5">
-            <Tooltip>
-              <TooltipTrigger as-child>
-                <Button variant="ghost" size="sm" :disabled="!trace" class="h-8 text-[12.5px]" @click="viewer?.frame()"><Icon name="maximize" :size="14" /> Fit</Button>
-              </TooltipTrigger>
-              <TooltipContent class="text-[11.5px]">Fit to view <kbd class="ml-1">F</kbd></TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger as-child>
-                <Button variant="ghost" size="sm" class="h-8 text-[12.5px]" :class="{ 'bg-secondary': glass.autoRotate }" @click="glass.autoRotate = !glass.autoRotate"><Icon name="rotate" :size="14" /> Rotate</Button>
-              </TooltipTrigger>
-              <TooltipContent class="text-[11.5px]">Auto rotate <kbd class="ml-1">R</kbd></TooltipContent>
-            </Tooltip>
-            <span class="mx-1.5 h-4 w-px bg-border" />
-            <Button variant="ghost" size="sm" :disabled="!trace || !!exporting" class="h-8 text-[12.5px]" @click="doExport('png')"><Icon name="camera" :size="14" /> PNG</Button>
-            <Button variant="ghost" size="sm" :disabled="!trace || !!exporting" class="h-8 text-[12.5px]" @click="doExport('stl')"><Icon name="layers" :size="14" /> STL</Button>
-            <Button size="sm" :disabled="!trace || !!exporting" class="ml-1 h-8 rounded-md text-[12.5px]" @click="doExport('glb')"><Icon name="download" :size="14" /> Export GLB</Button>
-          </div>
-        </header>
-
-        <div class="relative min-h-0 flex-1">
+        <main class="relative min-w-0 flex-1">
           <GlassViewer ref="viewer" :trace="trace" :params="glass" @dimensions="dims = $event" />
 
+          <!-- Floating view dock -->
+          <div class="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-xl border border-border/70 bg-card/90 p-1 shadow-[0_8px_24px_-12px_rgba(0,0,0,0.25)] backdrop-blur">
+            <div class="flex rounded-lg bg-black/[0.05] p-0.5">
+              <button
+                v-for="v in (['angle', 'front', 'side', 'top'] as const)" :key="v"
+                class="h-7 rounded-md px-3 text-[12px] font-medium capitalize transition-colors disabled:opacity-40"
+                :class="view === v ? 'bg-card text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.08),0_0_0_1px_rgba(0,0,0,0.05)]' : 'text-muted-foreground hover:text-foreground'"
+                :disabled="!trace" @click="setView(v)"
+              >{{ v }}</button>
+            </div>
+            <span class="mx-1 h-5 w-px bg-border" />
+            <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8" :disabled="!trace" @click="viewer?.frame()"><Icon name="maximize" :size="15" /></Button></TooltipTrigger><TooltipContent class="text-[11.5px]">Fit to view <kbd class="ml-1">F</kbd></TooltipContent></Tooltip>
+            <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8" :class="{ 'bg-black/[0.06]': glass.autoRotate }" @click="glass.autoRotate = !glass.autoRotate"><Icon name="orbit" :size="15" /></Button></TooltipTrigger><TooltipContent class="text-[11.5px]">Auto rotate <kbd class="ml-1">R</kbd></TooltipContent></Tooltip>
+          </div>
+
+          <!-- Dimensions readout -->
           <AnimatePresence>
-            <motion.div
-              v-if="dims" key="hud"
-              class="absolute bottom-4 left-4 flex gap-1.5"
-              :initial="{ opacity: 0, y: 8 }" :animate="{ opacity: 1, y: 0 }" :exit="{ opacity: 0, y: 8 }"
-            >
-              <span v-for="c in [['W', dims.widthMm], ['H', dims.heightMm], ['D', dims.depthMm]] as const" :key="c[0]" class="flex h-7 items-center gap-1.5 rounded-md bg-card/80 px-2.5 font-mono text-[12px] tabular-nums backdrop-blur">
+            <motion.div v-if="dims" key="hud" class="absolute top-4 left-4 flex gap-1" :initial="{ opacity: 0, y: -6 }" :animate="{ opacity: 1, y: 0 }" :exit="{ opacity: 0, y: -6 }">
+              <span v-for="c in [['W', dims.widthMm], ['H', dims.heightMm], ['D', dims.depthMm]] as const" :key="c[0]" class="flex h-7 items-center gap-1.5 rounded-md border border-border/70 bg-card/85 px-2.5 font-mono text-[11.5px] tabular-nums backdrop-blur">
                 <b class="text-[10px] font-semibold text-muted-foreground">{{ c[0] }}</b>{{ c[1].toFixed(1) }} mm
               </span>
-              <span class="flex h-7 items-center rounded-md bg-card/80 px-2.5 font-mono text-[12px] text-muted-foreground backdrop-blur">{{ Math.round(dims.triangles).toLocaleString('en-US') }} tris</span>
+              <span class="flex h-7 items-center rounded-md border border-border/70 bg-card/85 px-2.5 font-mono text-[11.5px] text-muted-foreground backdrop-blur">{{ Math.round(dims.triangles).toLocaleString('en-US') }} tris</span>
             </motion.div>
           </AnimatePresence>
 
+          <!-- Empty state -->
           <div v-if="!image" class="empty-state pointer-events-none absolute inset-0 grid place-items-center p-6">
             <div class="pointer-events-auto max-w-[420px] px-8 text-center">
-              <div class="mx-auto mb-5 flex size-12 items-center justify-center rounded-xl bg-card text-foreground shadow-[0_0_0_1px_var(--border)]">
-                <Icon name="gem" :size="22" />
-              </div>
+              <div class="mx-auto mb-5 flex size-12 items-center justify-center rounded-xl bg-card text-foreground shadow-[0_0_0_1px_var(--border),0_8px_20px_-12px_rgba(0,0,0,0.3)]"><Icon name="gem" :size="22" /></div>
               <h1 class="mb-2 text-[20px] font-semibold tracking-[-0.02em]">Turn any logo into glass</h1>
-              <p class="mb-5 text-[13px] leading-relaxed text-muted-foreground">Drop a PNG, JPG, WebP or SVG anywhere, paste from the clipboard, or pick a file. You get a true-to-size 3D glass model you can orbit and export.</p>
+              <p class="mb-5 text-[13px] leading-relaxed text-muted-foreground">Drop a PNG, JPG, WebP or SVG anywhere, paste from the clipboard, or pick a file. You get a true-to-size 3D model you can orbit, restyle and export.</p>
               <div class="flex justify-center gap-2">
-                <Button as="label" size="sm" class="h-8 cursor-pointer text-[12.5px]">
-                  <Icon name="upload" :size="14" /> Choose image
-                  <input type="file" accept="image/*,.svg" hidden @change="onPick">
-                </Button>
+                <Button as="label" size="sm" class="h-8 cursor-pointer text-[12.5px]"><Icon name="upload" :size="14" /> Choose image<input type="file" accept="image/*,.svg" hidden @change="onPick"></Button>
                 <Button variant="ghost" size="sm" class="h-8 text-[12.5px]" @click="loadSample"><Icon name="sparkle" :size="14" /> Try sample</Button>
               </div>
               <div class="mt-5 flex justify-center gap-4 text-[11.5px] text-muted-foreground">
-                <span><kbd class="mr-1">⌘V</kbd>paste</span>
-                <span><kbd class="mr-1">F</kbd>fit</span>
-                <span><kbd class="mr-1">R</kbd>rotate</span>
-                <span><kbd class="mr-1">1–3</kbd>views</span>
+                <span><kbd class="mr-1">⌘V</kbd>paste</span><span><kbd class="mr-1">F</kbd>fit</span><span><kbd class="mr-1">R</kbd>rotate</span><span><kbd class="mr-1">1–3</kbd>views</span>
               </div>
             </div>
           </div>
 
           <AnimatePresence>
-            <motion.div
-              v-if="dragging" key="drop"
-              class="pointer-events-none absolute inset-3 flex items-center justify-center gap-2 rounded-[10px] border-[1.5px] border-dashed border-foreground/40 bg-card/60 text-[15px] font-medium text-foreground"
-              :initial="{ opacity: 0 }" :animate="{ opacity: 1 }" :exit="{ opacity: 0 }"
-            >
+            <motion.div v-if="dragging" key="drop" class="pointer-events-none absolute inset-3 flex items-center justify-center gap-2 rounded-xl border-[1.5px] border-dashed border-foreground/40 bg-card/60 text-[15px] font-medium" :initial="{ opacity: 0 }" :animate="{ opacity: 1 }" :exit="{ opacity: 0 }">
               <Icon name="upload" :size="18" /> Drop to trace
             </motion.div>
           </AnimatePresence>
-
           <AnimatePresence>
-            <motion.div
-              v-if="toast" key="toast"
-              class="absolute bottom-5 left-1/2 flex h-9 items-center gap-2 rounded-md bg-primary px-3.5 text-[12.5px] font-medium text-primary-foreground shadow-md"
-              :initial="{ opacity: 0, y: 8, x: '-50%' }" :animate="{ opacity: 1, y: 0, x: '-50%' }" :exit="{ opacity: 0, y: 8, x: '-50%' }"
-            >
+            <motion.div v-if="toast" key="toast" class="absolute top-4 left-1/2 flex h-9 items-center gap-2 rounded-lg bg-primary px-3.5 text-[12.5px] font-medium text-primary-foreground shadow-md" :initial="{ opacity: 0, y: -8, x: '-50%' }" :animate="{ opacity: 1, y: 0, x: '-50%' }" :exit="{ opacity: 0, y: -8, x: '-50%' }">
               <Icon name="check" :size="14" /> {{ toast }}
             </motion.div>
           </AnimatePresence>
-        </div>
-      </main>
+        </main>
+      </div>
     </div>
   </TooltipProvider>
 </template>
