@@ -38,7 +38,7 @@
 
 @theme inline {
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -79,6 +79,7 @@
     overflow: hidden;
   }
   button { cursor: pointer; }
+  .font-mono { font-feature-settings: 'zero', 'tnum'; letter-spacing: -0.01em; }
   ::selection { background: rgba(0, 0, 0, 0.08); }
   kbd {
     @apply inline-block rounded-[4px] border border-input bg-secondary px-1.5 text-[10.5px] text-muted-foreground;

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { AnimatePresence, motion } from 'motion-v'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { DEFAULT_GLASS_PARAMS, type GlassParams } from '~/utils/glassScene'
@@ -48,9 +49,9 @@ const bgSwatches = ['#fafaf9', '#f4f4f2', '#ffffff', '#ecebe7', '#e6e9f0', '#dfe
       >
         <input type="file" accept="image/*,.svg" hidden @change="emit('pick', $event)">
         <template v-if="trace">
-          <span class="flex size-11 shrink-0 items-center justify-center rounded-lg bg-card shadow-[0_0_0_1px_var(--border)]">
+          <motion.span :key="fileName" class="flex size-11 shrink-0 items-center justify-center rounded-lg bg-card shadow-[0_0_0_1px_var(--border)]" :initial="{ scale: 0.7, opacity: 0, rotate: -6 }" :animate="{ scale: 1, opacity: 1, rotate: 0 }" :transition="{ type: 'spring', stiffness: 380, damping: 24 }">
             <svg class="size-8 text-foreground" :viewBox="viewBox" preserveAspectRatio="xMidYMid meet"><path :d="svgPath" fill="currentColor" fill-rule="evenodd" /></svg>
-          </span>
+          </motion.span>
           <div class="min-w-0 flex-1">
             <div class="truncate text-[13px] font-medium" :title="fileName">{{ fileName }}</div>
             <div class="mt-0.5 text-[11.5px] text-muted-foreground">{{ trace.polygons.length }} shape{{ trace.polygons.length === 1 ? '' : 's' }} · {{ trace.vertexCount }} pts · {{ modeLabel[trace.resolvedMode] }}</div>
@@ -66,7 +67,7 @@ const bgSwatches = ['#fafaf9', '#f4f4f2', '#ffffff', '#ecebe7', '#e6e9f0', '#dfe
         </template>
         <span v-if="busy" class="absolute top-2.5 right-2.5 size-3 animate-spin rounded-full border-2 border-muted border-t-foreground" />
       </label>
-      <p v-if="error" class="mt-2 flex items-center gap-1.5 px-1 text-[12px] text-destructive"><Icon name="info" :size="13" /> {{ error }}</p>
+      <AnimatePresence><motion.p v-if="error" key="err" class="mt-2 flex items-center gap-1.5 px-1 text-[12px] text-destructive" :initial="{ opacity: 0, y: -4 }" :animate="{ opacity: 1, y: 0 }" :exit="{ opacity: 0 }"><Icon name="info" :size="13" /> {{ error }}</motion.p></AnimatePresence>
     </div>
 
     <Tabs v-model="tab" class="flex min-h-0 flex-1 flex-col gap-0">
@@ -80,7 +81,7 @@ const bgSwatches = ['#fafaf9', '#f4f4f2', '#ffffff', '#ecebe7', '#e6e9f0', '#dfe
 
       <div class="min-h-0 flex-1 overflow-y-auto px-4 pt-5 pb-6 [scrollbar-width:thin]">
         <TabsContent value="shape" class="mt-0 flex flex-col gap-7">
-          <SectionGroup title="Trace" :hint="trace ? `${trace.polygons.length} shapes` : undefined" resettable @reset="Object.assign(traceOpts, T)">
+          <SectionGroup :index="0" title="Trace" :hint="trace ? `${trace.polygons.length} shapes` : undefined" resettable @reset="Object.assign(traceOpts, T)">
             <div class="seg">
               <button v-for="m in (['auto', 'dark', 'light', 'alpha'] as const)" :key="m" :class="{ on: traceOpts.mode === m }" @click="traceOpts.mode = m">{{ ({ auto: 'Auto', dark: 'Dark', light: 'Light', alpha: 'Alpha' })[m] }}</button>
             </div>
@@ -94,7 +95,7 @@ const bgSwatches = ['#fafaf9', '#f4f4f2', '#ffffff', '#ecebe7', '#e6e9f0', '#dfe
             </div>
           </SectionGroup>
 
-          <SectionGroup title="Dimensions" hint="Height follows aspect" resettable @reset="pick('widthMm', 'depthMm', 'bevelMm', 'bevelSegments')">
+          <SectionGroup :index="1" title="Dimensions" hint="Height follows aspect" resettable @reset="pick('widthMm', 'depthMm', 'bevelMm', 'bevelSegments')">
             <div class="grid grid-cols-3 gap-1.5">
               <label v-for="d in ([['W', 'widthMm'], ['H', 'height'], ['D', 'depthMm']] as const)" :key="d[0]" class="dim">
                 <span>{{ d[0] }}</span>
@@ -109,10 +110,10 @@ const bgSwatches = ['#fafaf9', '#f4f4f2', '#ffffff', '#ecebe7', '#e6e9f0', '#dfe
         </TabsContent>
 
         <TabsContent value="material" class="mt-0 flex flex-col gap-7">
-          <SectionGroup title="Finish">
+          <SectionGroup :index="0" title="Finish">
             <MaterialPicker :glass="glass" />
           </SectionGroup>
-          <SectionGroup :title="isGlass ? 'Optics' : 'Surface'">
+          <SectionGroup :index="1" :title="isGlass ? 'Optics' : 'Surface'">
             <template v-if="isGlass">
               <SliderField v-model="glass.ior" label="Refraction" :min="1" :max="2.33" :step="0.01" :default-value="D.ior" />
               <SliderField v-model="glass.dispersion" label="Dispersion" :min="0" :max="0.3" :step="0.005" :decimals="3" :default-value="D.dispersion" />
@@ -127,7 +128,7 @@ const bgSwatches = ['#fafaf9', '#f4f4f2', '#ffffff', '#ecebe7', '#e6e9f0', '#dfe
               <SliderField v-model="glass.clearcoat" label="Lacquer" :min="0" :max="1" :step="0.01" :default-value="0" />
             </template>
           </SectionGroup>
-          <SectionGroup v-if="isGlass" title="Edges & tint">
+          <SectionGroup :index="2" v-if="isGlass" title="Edges & tint">
             <SliderField v-model="glass.tir" label="Edge darkening" :min="0" :max="1" :step="0.01" :default-value="D.tir" />
             <SliderField v-model="glass.edgeChroma" label="Edge chroma" :min="0" :max="1" :step="0.01" :default-value="D.edgeChroma" />
             <SliderField v-model="glass.clearcoat" label="Polish" :min="0" :max="1" :step="0.01" :default-value="D.clearcoat" />
@@ -137,17 +138,17 @@ const bgSwatches = ['#fafaf9', '#f4f4f2', '#ffffff', '#ecebe7', '#e6e9f0', '#dfe
         </TabsContent>
 
         <TabsContent value="scene" class="mt-0 flex flex-col gap-7">
-          <SectionGroup title="Backdrop" resettable @reset="pick('background', 'shadow', 'vignette')">
+          <SectionGroup :index="0" title="Backdrop" resettable @reset="pick('background', 'shadow', 'vignette')">
             <ColorField v-model="glass.background" label="Background" :swatches="bgSwatches" />
             <SliderField v-model="glass.shadow" label="Shadow" :min="0" :max="1" :step="0.01" :default-value="D.shadow" />
             <SliderField v-model="glass.vignette" label="Vignette" :min="0" :max="0.6" :step="0.01" :default-value="D.vignette" />
           </SectionGroup>
-          <SectionGroup title="Light & camera" resettable @reset="pick('envIntensity', 'exposure', 'fov')">
+          <SectionGroup :index="1" title="Light & camera" resettable @reset="pick('envIntensity', 'exposure', 'fov')">
             <SliderField v-model="glass.envIntensity" label="Studio light" :min="0" :max="3" :step="0.05" :default-value="D.envIntensity" />
             <SliderField v-model="glass.exposure" label="Exposure" :min="0.4" :max="2" :step="0.01" :default-value="D.exposure" />
             <SliderField v-model="glass.fov" label="Lens" :min="15" :max="60" :step="1" :decimals="0" unit="°" :default-value="D.fov" />
           </SectionGroup>
-          <SectionGroup title="Motion" resettable @reset="pick('autoRotate', 'rotateSpeed')">
+          <SectionGroup :index="2" title="Motion" resettable @reset="pick('autoRotate', 'rotateSpeed')">
             <div class="row"><span>Auto rotate</span><Switch class="scale-90" :model-value="glass.autoRotate" @update:model-value="v => (glass.autoRotate = v)" /></div>
             <SliderField v-if="glass.autoRotate" v-model="glass.rotateSpeed" label="Speed" :min="0.2" :max="4" :step="0.1" :decimals="1" :default-value="D.rotateSpeed" />
           </SectionGroup>

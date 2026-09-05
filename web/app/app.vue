@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AnimatePresence, motion } from 'motion-v'
+import { AnimatePresence, MotionConfig, motion } from 'motion-v'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { DEFAULT_GLASS_PARAMS, type GlassParams, type ModelDimensions } from '~/utils/glassScene'
@@ -19,6 +19,10 @@ const error = ref('')
 const dragging = ref(false)
 const exporting = ref<'' | 'glb' | 'stl' | 'png'>('')
 const toast = ref('')
+const hudWText = useSpringText(() => dims.value?.widthMm ?? 0, v => v.toFixed(1))
+const hudHText = useSpringText(() => dims.value?.heightMm ?? 0, v => v.toFixed(1))
+const hudDText = useSpringText(() => dims.value?.depthMm ?? 0, v => v.toFixed(1))
+const hudTText = useSpringText(() => dims.value?.triangles ?? 0, v => Math.round(v).toLocaleString('en-US'))
 type ViewName = 'angle' | 'front' | 'side' | 'top'
 const view = ref<ViewName>('angle')
 const viewer = ref<{ exportGLB: () => Promise<void>; exportSTL: () => void; screenshot: () => Promise<void>; frame: () => void; setView: (v: ViewName) => void } | null>(null)
@@ -151,6 +155,7 @@ function setHeight(v: number) {
 </script>
 
 <template>
+  <MotionConfig :transition="{ type: 'spring', stiffness: 420, damping: 34 }">
   <TooltipProvider :delay-duration="300">
     <div class="flex h-full w-full flex-col" @dragover.prevent="dragging = true" @dragleave.prevent="dragging = false" @drop.prevent="onDrop">
       <!-- App bar -->
@@ -179,27 +184,30 @@ function setHeight(v: number) {
           <GlassViewer ref="viewer" :trace="trace" :params="glass" @dimensions="dims = $event" />
 
           <!-- Floating view dock -->
-          <div class="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-xl border border-border/70 bg-card/90 p-1 shadow-[0_8px_24px_-12px_rgba(0,0,0,0.25)] backdrop-blur">
+          <motion.div class="absolute bottom-4 left-1/2 flex items-center gap-1 rounded-xl border border-border/70 bg-card/90 p-1 shadow-[0_8px_24px_-12px_rgba(0,0,0,0.25)] backdrop-blur" :initial="{ opacity: 0, y: 12, x: '-50%' }" :animate="{ opacity: 1, y: 0, x: '-50%' }" :transition="{ type: 'spring', stiffness: 300, damping: 28, delay: 0.15 }">
             <div class="flex rounded-lg bg-black/[0.05] p-0.5">
               <button
                 v-for="v in (['angle', 'front', 'side', 'top'] as const)" :key="v"
-                class="h-7 rounded-md px-3 text-[12px] font-medium capitalize transition-colors disabled:opacity-40"
-                :class="view === v ? 'bg-card text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.08),0_0_0_1px_rgba(0,0,0,0.05)]' : 'text-muted-foreground hover:text-foreground'"
+                class="relative h-7 rounded-md px-3 text-[12px] font-medium capitalize transition-colors disabled:opacity-40"
+                :class="view === v ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'"
                 :disabled="!trace" @click="setView(v)"
-              >{{ v }}</button>
+              >
+                <motion.span v-if="view === v" layout-id="view-pill" class="absolute inset-0 -z-10 rounded-md bg-card shadow-[0_1px_2px_rgba(0,0,0,0.08),0_0_0_1px_rgba(0,0,0,0.05)]" :transition="{ type: 'spring', stiffness: 500, damping: 40 }" />
+                <span class="relative">{{ v }}</span>
+              </button>
             </div>
             <span class="mx-1 h-5 w-px bg-border" />
             <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8" :disabled="!trace" @click="viewer?.frame()"><Icon name="maximize" :size="15" /></Button></TooltipTrigger><TooltipContent class="text-[11.5px]">Fit to view <kbd class="ml-1">F</kbd></TooltipContent></Tooltip>
             <Tooltip><TooltipTrigger as-child><Button variant="ghost" size="icon" class="size-8" :class="{ 'bg-black/[0.06]': glass.autoRotate }" @click="glass.autoRotate = !glass.autoRotate"><Icon name="orbit" :size="15" /></Button></TooltipTrigger><TooltipContent class="text-[11.5px]">Auto rotate <kbd class="ml-1">R</kbd></TooltipContent></Tooltip>
-          </div>
+          </motion.div>
 
           <!-- Dimensions readout -->
           <AnimatePresence>
             <motion.div v-if="dims" key="hud" class="absolute top-4 left-4 flex gap-1" :initial="{ opacity: 0, y: -6 }" :animate="{ opacity: 1, y: 0 }" :exit="{ opacity: 0, y: -6 }">
-              <span v-for="c in [['W', dims.widthMm], ['H', dims.heightMm], ['D', dims.depthMm]] as const" :key="c[0]" class="flex h-7 items-center gap-1.5 rounded-md border border-border/70 bg-card/85 px-2.5 font-mono text-[11.5px] tabular-nums backdrop-blur">
-                <b class="text-[10px] font-semibold text-muted-foreground">{{ c[0] }}</b>{{ c[1].toFixed(1) }} mm
+              <span v-for="c in ([['W', hudWText], ['H', hudHText], ['D', hudDText]] as const)" :key="c[0]" class="flex h-7 items-center gap-1.5 rounded-md border border-border/70 bg-card/85 px-2.5 font-mono text-[11.5px] tabular-nums backdrop-blur">
+                <b class="text-[10px] font-semibold text-muted-foreground">{{ c[0] }}</b>{{ c[1] }} mm
               </span>
-              <span class="flex h-7 items-center rounded-md border border-border/70 bg-card/85 px-2.5 font-mono text-[11.5px] text-muted-foreground backdrop-blur">{{ Math.round(dims.triangles).toLocaleString('en-US') }} tris</span>
+              <span class="flex h-7 items-center rounded-md border border-border/70 bg-card/85 px-2.5 font-mono text-[11.5px] text-muted-foreground backdrop-blur">{{ hudTText }} tris</span>
             </motion.div>
           </AnimatePresence>
 
@@ -233,6 +241,7 @@ function setHeight(v: number) {
       </div>
     </div>
   </TooltipProvider>
+  </MotionConfig>
 </template>
 
 

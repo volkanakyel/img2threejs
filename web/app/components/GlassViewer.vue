@@ -11,7 +11,7 @@ let ro: ResizeObserver | null = null
 
 onMounted(() => {
   studio = new GlassStudio(canvas.value!)
-  studio.setParams({ ...props.params })
+  studio.snapParams({ ...props.params })
   ro = new ResizeObserver(() => studio?.resize())
   ro.observe(canvas.value!)
 })

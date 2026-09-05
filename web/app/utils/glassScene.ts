@@ -133,7 +133,17 @@ export class GlassStudio {
   private clock = new THREE.Clock()
   private mesh: THREE.Mesh | null = null
   private trace: TraceResult | null = null
+  /** Values the UI asked for. */
+  private target: GlassParams = { ...DEFAULT_GLASS_PARAMS }
+  /** Values currently applied; eased toward `target` every frame. */
   private params: GlassParams = { ...DEFAULT_GLASS_PARAMS }
+  private built = { widthMm: NaN, depthMm: NaN, bevelMm: NaN, bevelSegments: NaN }
+  private camGoal: THREE.Vector3 | null = null
+  private pop = 1
+  private lastTime = 0
+  private readonly colorKeys = ['tint', 'background'] as const
+  private colorA = new THREE.Color()
+  private colorB = new THREE.Color()
   private raf = 0
   private pmrem: THREE.PMREMGenerator
   private disposed = false
@@ -257,12 +267,97 @@ export class GlassStudio {
     this.placeBackdrop()
   }
 
-  private loop = () => {
+  private loop = (now = performance.now()) => {
     if (this.disposed) return
     this.raf = requestAnimationFrame(this.loop)
+    const dt = Math.min(0.1, (now - this.lastTime) / 1000 || 0.016)
+    this.lastTime = now
+    this.ease(dt)
     this.controls.update()
     this.placeBackdrop()
     this.renderPasses()
+  }
+
+  /**
+   * Exponential easing toward the target parameters. Every slider, colour and camera move
+   * arrives over ~150 ms instead of snapping, which is what makes the viewer feel fluid.
+   */
+  private ease(dt: number) {
+    const k = 1 - Math.exp(-dt * 14)
+    const kCam = 1 - Math.exp(-dt * 8)
+    const p = this.params as unknown as Record<string, number | string | boolean>
+    const t = this.target as unknown as Record<string, number | string | boolean>
+    let dirty = false
+    for (const key of Object.keys(t)) {
+      const tv = t[key]!, pv = p[key]!
+      if (tv === pv) continue
+      dirty = true
+      if (typeof tv === 'number' && typeof pv === 'number') {
+        if (key === 'bevelSegments') { p[key] = tv; continue }
+        const next = pv + (tv - pv) * k
+        p[key] = Math.abs(tv - next) < Math.abs(tv) * 1e-4 + 1e-4 ? tv : next
+      } else if (typeof tv === 'string' && (this.colorKeys as readonly string[]).includes(key)) {
+        this.colorA.set(pv as string).lerp(this.colorB.set(tv), k)
+        const hex = `#${this.colorA.getHexString()}`
+        p[key] = hex === pv || this.colorA.equals(this.colorB) ? tv : hex
+      } else {
+        p[key] = tv
+      }
+    }
+    if (dirty) this.apply()
+
+    if (this.camGoal) {
+      this.camera.position.lerp(this.camGoal, kCam)
+      if (this.camera.position.distanceTo(this.camGoal) < 0.05) this.camGoal = null
+    }
+    if (this.pop < 1) {
+      this.pop = Math.min(1, this.pop + dt / 0.45)
+      const s = 1 - 0.05 * Math.sin(Math.PI * this.pop)
+      this.mesh?.scale.setScalar(s)
+    }
+  }
+
+  /** Push the eased parameters into materials, camera and scene. */
+  private apply() {
+    const p = this.params
+    const prevFinish = this.mesh?.material === this.metal ? 'metal' : 'glass'
+    this.material.roughness = p.roughness
+    this.material.ior = p.ior
+    this.material.uniforms.chromaticAberration.value = p.dispersion
+    this.material.clearcoat = p.clearcoat
+    this.material.envMapIntensity = p.envIntensity
+    this.material.attenuationColor.set(p.tint)
+    this.material.color.set(p.tint).lerp(new THREE.Color(0xffffff), 0.7)
+    this.material.attenuationDistance = p.attenuationMm
+    this.material.thickness = p.depthMm
+    this.material.iridescence = p.edgeChroma
+    ;(this.material as unknown as { tirUniforms: { tirStrength: { value: number } } }).tirUniforms.tirStrength.value = p.tir
+    this.material.uniforms.anisotropicBlur.value = p.blur
+    this.material.uniforms._transmission.value = p.clarity
+    this.metal.color.set(p.tint)
+    this.metal.metalness = p.metalness
+    this.metal.roughness = p.roughness
+    this.metal.clearcoat = p.clearcoat
+    this.metal.envMapIntensity = p.envIntensity
+    this.shadowPlane.material.opacity = p.shadow
+    ;(this.scene.background as THREE.Color).set(p.background)
+    this.paintBackdrop()
+    this.renderer.toneMappingExposure = p.exposure
+    this.controls.autoRotate = p.autoRotate
+    this.controls.autoRotateSpeed = p.rotateSpeed
+    if (p.fov !== this.camera.fov) {
+      this.camera.fov = p.fov
+      this.camera.updateProjectionMatrix()
+    }
+    if (this.mesh) {
+      this.mesh.material = p.finish === 'metal' ? this.metal : this.material
+      if (prevFinish !== p.finish) this.pop = 0
+    }
+    const b = this.built
+    if (
+      Math.abs(b.widthMm - p.widthMm) > 0.01 || Math.abs(b.depthMm - p.depthMm) > 0.01 ||
+      Math.abs(b.bevelMm - p.bevelMm) > 0.005 || b.bevelSegments !== p.bevelSegments
+    ) this.rebuild()
   }
 
   /** Back-face pass, main pass, then the visible pass, as drei's MeshTransmissionMaterial does. */
@@ -302,49 +397,23 @@ export class GlassStudio {
   }
 
   setTrace(trace: TraceResult | null) {
+    const first = !this.mesh
     this.trace = trace
     this.rebuild()
+    if (first) this.camera.position.set(0, 0, 0)
     this.frame()
+    if (this.mesh) this.pop = 0
   }
 
   setParams(next: Partial<GlassParams>) {
-    const prev = this.params
-    this.params = { ...prev, ...next }
-    const p = this.params
-    const geometryChanged =
-      p.widthMm !== prev.widthMm || p.depthMm !== prev.depthMm ||
-      p.bevelMm !== prev.bevelMm || p.bevelSegments !== prev.bevelSegments
-    this.material.roughness = p.roughness
-    this.material.ior = p.ior
-    this.material.uniforms.chromaticAberration.value = p.dispersion
-    this.material.clearcoat = p.clearcoat
-    this.material.envMapIntensity = p.envIntensity
-    this.material.attenuationColor.set(p.tint)
-    // Base colour follows the tint so dark or saturated glass stays dark where clarity drops.
-    this.material.color.set(p.tint).lerp(new THREE.Color(0xffffff), 0.7)
-    this.material.attenuationDistance = p.attenuationMm
-    this.material.thickness = p.depthMm
-    ;(this.scene.background as THREE.Color).set(p.background)
-    this.material.iridescence = p.edgeChroma
-    ;(this.material as unknown as { tirUniforms: { tirStrength: { value: number } } }).tirUniforms.tirStrength.value = p.tir
-    if (p.background !== prev.background || p.vignette !== prev.vignette) this.paintBackdrop()
-    this.metal.color.set(p.tint)
-    this.metal.metalness = p.metalness
-    this.metal.roughness = p.roughness
-    this.metal.clearcoat = p.clearcoat
-    this.metal.envMapIntensity = p.envIntensity
-    this.shadowPlane.material.opacity = p.shadow
-    if (this.mesh) this.mesh.material = p.finish === 'metal' ? this.metal : this.material
-    this.material.uniforms.anisotropicBlur.value = p.blur
-    this.material.uniforms._transmission.value = p.clarity
-    this.renderer.toneMappingExposure = p.exposure
-    this.controls.autoRotate = p.autoRotate
-    this.controls.autoRotateSpeed = p.rotateSpeed
-    if (p.fov !== this.camera.fov) {
-      this.camera.fov = p.fov
-      this.camera.updateProjectionMatrix()
-    }
-    if (geometryChanged) this.rebuild()
+    Object.assign(this.target, next)
+  }
+
+  /** Apply the target immediately, skipping the easing (used on first load). */
+  snapParams(next: Partial<GlassParams>) {
+    Object.assign(this.target, next)
+    Object.assign(this.params, next)
+    this.apply()
   }
 
   /**
@@ -381,7 +450,11 @@ export class GlassStudio {
     m.customProgramCacheKey = () => 'glass-tir'
   }
 
+  private lastBackdrop = ''
   private paintBackdrop() {
+    const sig = `${this.params.background}|${this.params.vignette}`
+    if (sig === this.lastBackdrop) return
+    this.lastBackdrop = sig
     const c = this.backdropCanvas
     const ctx = c.getContext('2d')!
     const base = new THREE.Color(this.params.background)
@@ -465,6 +538,7 @@ export class GlassStudio {
 
     this.mesh = new THREE.Mesh(merged, p.finish === 'metal' ? this.metal : this.material)
     this.mesh.name = 'glass-logo'
+    this.built = { widthMm: p.widthMm, depthMm: p.depthMm, bevelMm: p.bevelMm, bevelSegments: p.bevelSegments }
     this.scene.add(this.mesh)
     this.paintShadow(t, scale, cx, cy, bw, bh, p.depthMm)
   }
@@ -520,12 +594,13 @@ export class GlassStudio {
     const tanH = tanV * this.camera.aspect
     // Fit both axes, then leave room for the panel on the left and the HUD below.
     const dist = Math.max(size.y / 2 / tanV, size.x / 2 / tanH, size.z) * 1.55
-    this.camera.position.copy(this.viewDir).multiplyScalar(dist)
+    const goal = this.viewDir.clone().multiplyScalar(dist)
+    if (this.camera.position.lengthSq() < 1 || !this.mesh) this.camera.position.copy(goal)
+    else this.camGoal = goal
     this.camera.near = Math.max(0.1, dist / 100)
     this.camera.far = dist * 20
     this.camera.updateProjectionMatrix()
     this.controls.target.set(0, 0, 0)
-    this.controls.update()
     this.placeBackdrop()
   }
 
@@ -536,7 +611,7 @@ export class GlassStudio {
     wrapper.name = 'glass-logo'
     wrapper.scale.setScalar(0.001)
     // The screen-space material zeroes `transmission`; export a standard KHR glass material.
-    const p = this.params
+    const p = this.target
     const exportMaterial = p.finish === 'metal'
       ? new THREE.MeshPhysicalMaterial({ color: new THREE.Color(p.tint), metalness: p.metalness, roughness: p.roughness, clearcoat: p.clearcoat, clearcoatRoughness: 0.08 })
       : new THREE.MeshPhysicalMaterial({
