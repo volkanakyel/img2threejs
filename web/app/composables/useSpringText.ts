@@ -1,15 +1,41 @@
-import { useMotionValueEvent, useSpring } from 'motion-v'
 import type { Ref } from 'vue'
 
 /**
- * A number that springs toward its source and exposes a formatted string ref, because Vue
- * templates cannot render a MotionValue directly.
+ * A number that eases toward its source on requestAnimationFrame and exposes a formatted
+ * string ref. Self-contained so it works anywhere in a template, unlike a raw MotionValue.
  */
-export function useSpringText(source: Ref<number> | (() => number), format: (v: number) => string, opts = { stiffness: 380, damping: 36 }) {
+export function useSpringText(
+  source: Ref<number> | (() => number),
+  format: (v: number) => string,
+  opts: { stiffness?: number; damping?: number } = {},
+) {
   const read = typeof source === 'function' ? source : () => source.value
-  const spring = useSpring(read(), opts)
-  const text = ref(format(read()))
-  watch(read, v => spring.set(v))
-  useMotionValueEvent(spring, 'change', v => (text.value = format(v as number)))
+  const stiffness = opts.stiffness ?? 380
+  const damping = opts.damping ?? 36
+  let current = read()
+  let velocity = 0
+  let target = current
+  let raf = 0
+  let last = 0
+  const text = ref(format(current))
+
+  const tick = (now: number) => {
+    const dt = Math.min(0.064, (now - last) / 1000 || 0.016)
+    last = now
+    // Damped spring integration; settles in ~250 ms with the defaults.
+    const accel = -stiffness * (current - target) - damping * velocity
+    velocity += accel * dt
+    current += velocity * dt
+    const settled = Math.abs(current - target) < Math.abs(target) * 1e-4 + 1e-3 && Math.abs(velocity) < 1e-2
+    if (settled) { current = target; velocity = 0 }
+    text.value = format(current)
+    raf = settled ? 0 : requestAnimationFrame(tick)
+  }
+
+  watch(read, v => {
+    target = v
+    if (!raf) { last = performance.now(); raf = requestAnimationFrame(tick) }
+  })
+  onBeforeUnmount(() => cancelAnimationFrame(raf))
   return text
 }
