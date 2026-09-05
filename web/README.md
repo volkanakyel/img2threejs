@@ -1,6 +1,6 @@
-# Glass Logo Studio
+# Vitrum
 
-Upload a logo, icon or image and get a true-to-size 3D glass version rendered with Three.js.
+Vitrum (Latin for glass) turns a logo, icon or image into a true-to-size 3D glass or metal object rendered with Three.js.
 Built with Nuxt 4 on top of the [img2threejs](../README.md) skill's "shape extrude" pattern.
 UI: Tailwind v4 + [shadcn-vue](https://www.shadcn-vue.com) (Reka UI) components, Motion for Vue for animation.
 

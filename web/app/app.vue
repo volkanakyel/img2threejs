@@ -161,8 +161,8 @@ function setHeight(v: number) {
       <!-- App bar -->
       <header class="flex h-12 shrink-0 items-center justify-between border-b border-border/70 bg-card px-3">
         <div class="flex items-center gap-2.5">
-          <span class="flex size-6 items-center justify-center rounded-md bg-foreground text-background"><Icon name="logo" :size="13" :stroke-width="2" /></span>
-          <span class="text-[13.5px] font-semibold tracking-[-0.01em]">Glass Studio</span>
+          <BrandMark :size="20" class="text-foreground" />
+          <span class="text-[14px] font-semibold tracking-[-0.02em]">Vitrum</span>
           <span class="mx-1 h-4 w-px bg-border" />
           <span class="flex items-center gap-1.5 text-[12.5px] text-muted-foreground"><Icon name="frame" :size="13" /> {{ fileName || 'Untitled' }}</span>
         </div>
@@ -214,7 +214,7 @@ function setHeight(v: number) {
           <!-- Empty state -->
           <div v-if="!image" class="empty-state pointer-events-none absolute inset-0 grid place-items-center p-6">
             <div class="pointer-events-auto max-w-[420px] px-8 text-center">
-              <div class="mx-auto mb-5 flex size-12 items-center justify-center rounded-xl bg-card text-foreground shadow-[0_0_0_1px_var(--border),0_8px_20px_-12px_rgba(0,0,0,0.3)]"><Icon name="gem" :size="22" /></div>
+              <div class="mx-auto mb-5 flex size-14 items-center justify-center rounded-2xl bg-card text-foreground shadow-[0_0_0_1px_var(--border),0_8px_20px_-12px_rgba(0,0,0,0.3)]"><BrandMark :size="30" /></div>
               <h1 class="mb-2 text-[20px] font-semibold tracking-[-0.02em]">Turn any logo into glass</h1>
               <p class="mb-5 text-[13px] leading-relaxed text-muted-foreground">Drop a PNG, JPG, WebP or SVG anywhere, paste from the clipboard, or pick a file. You get a true-to-size 3D model you can orbit, restyle and export.</p>
               <div class="flex justify-center gap-2">

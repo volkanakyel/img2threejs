@@ -158,7 +158,7 @@ const bgSwatches = ['#fafaf9', '#f4f4f2', '#ffffff', '#ecebe7', '#e6e9f0', '#dfe
 
     <footer class="flex items-center justify-between border-t border-border/70 px-4 py-2.5">
       <button class="flex h-7 items-center gap-2 rounded-md px-2 text-[12px] text-muted-foreground transition hover:bg-black/5 hover:text-foreground" @click="emit('sample')"><Icon name="sparkle" :size="13" /> Sample logo</button>
-      <span class="text-[11px] text-muted-foreground/70">Built on img2threejs</span>
+      <span class="text-[11px] text-muted-foreground/70">Vitrum · built on img2threejs</span>
     </footer>
   </aside>
 </template>
